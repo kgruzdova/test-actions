@@ -6,9 +6,7 @@ on:
       - main # Trigger deployment on push to the main branch
 
 env:
-  # Use the repository name as the image name part (e.g., owner/repo_name)
   IMAGE_NAME: ${{ github.repository }}
-  # GitHub Container Registry URL
   REGISTRY: ghcr.io
 
 jobs:
@@ -36,104 +34,10 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=sha,prefix=sha- # Tag with commit SHA
+          type=sha,prefix=sha-
+          type=raw,value=latest
+          type=ref,event=branch # Pushes tag matching branch name, e.g., main
 
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-
-  deploy-to-server:
-    name: Deploy via SSH
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    # Only run if the build and push job succeeded
-    if: success()
-
-    environment: production # Optional: link to GitHub Environment secrets
-    
-    steps:
-    - name: SSH and Deploy
-      uses: appleboy/ssh-action@v1.0.1
-      with:
-        host: ${{ secrets.SSH_HOST }}
-        username: ${{ secrets.SSH_USER }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
-          # --- Setup for remote server ---
-          # Ensure Docker is running and required secrets/config are available on the server
-          
-          # Define image reference using the latest SHA tag from the build job
-          IMAGE_REF=${{ env.REGISTRY }}/${{ github.repository }}:${{ needs.build-and-push.outputs.sha_tag }}
-          
-          echo "Stopping and removing old container..."
-          # Use '|| true' to ignore errors if the container doesn't exist or isn't running
-          docker stop fastapitime-container || true
-          docker rm fastapitime-container || true
-          
-          echo "Pulling new image: ${IMAGE_REF}"
-          # Pull the image built in the previous job. Note: GH Actions build job pushes *all* tags specified in metadata.
-          # We assume the main tag pushed was the SHA tag if not explicitly defined otherwise, 
-          # but to be safe, we usually use a stable tag like 'latest' or just the main branch tag.
-          # For simplicity here, we'll rely on pulling the SHA tag or use a simpler pattern if the metadata is too complex.
-          # Since we used type=sha, we will use that specific tag. If the deployment server has access to GHCR secrets, it can pull.
-          # If not, the server needs to log in first (usually via a pre-configured Docker config).
-          
-          # For this simple example, we'll assume the server can pull publicly or we rely on a generic tag.
-          # Since this is an internal registry, the remote server MUST have GHCR login credentials configured in its Docker environment.
-          # For simplicity in this generated file, we'll use a placeholder for the final tag if the SHA tag is hard to get from build-push-action outputs directly.
-          # A safer approach for the deployment step is to use a branch name tag if it was pushed, e.g., ${{ github.ref_name }}
-          
-          # Re-evaluating tag: The build-push action outputs tags via 'outputs.tags', but accessing specific tags like SHA tag is complex here.
-          # Let's use the IMAGE_NAME as the tag for simplicity, as the GITHUB_TOKEN allows pulling.
-          # We'll modify the push job to ensure a 'latest' tag is always pushed alongside SHA.
-          
-          # ********* Correction on push step *********
-          # The build-push-action outputs a comma-separated list of tags. Accessing one specific tag reliably without complex parsing is hard.
-          # Let's adjust the push to ensure a simple 'latest' tag is pushed *after* the SHA tag, which is easier to reference on the remote.
-          # Rerunning build-push-action logic in mind: If we want the SHA tag on the remote server, we need to retrieve it.
-          
-          # Let's simplify the deployment reference based on common practice: using the full repository name as the image name tag if we trust the push completed.
-          # The user mentioned a simple deployment. We'll stick to using the image name/ref that was pushed.
-          # Given the previous job pushes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-..., we will use that structure, assuming the remote server has access to GHCR.
-          
-          # Let's use the branch name as a tag reference for simplicity on the remote if the SHA is too complex to retrieve:
-          IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          
-          # To make this work, the build job MUST push ${{ github.ref_name }} tag too.
-          # I will update the build job definition to push 'latest' and ${{ github.ref_name }} tag.
-          
-          # --- Re-writing the YAML below for clarity and robustness ---
-          
-          # Assuming the remote server has Docker configured to access GHCR (e.g., via its own GH_TOKEN or PAT stored securely).
-          
-          echo "Pulling latest image..."
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} || true
-          
-          echo "Starting new container..."
-          docker run -d \
-            --name fastapitime-container \
-            -p 8000:8000 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-            
-          echo "Deployment script finished."
-          
-# NOTE TO USER: Ensure the remote server has Docker installed and credentials configured to pull from ${{ env.REGISTRY }} (GHCR).
-# Secrets required: GITHUB_TOKEN (for build job), SSH_HOST, SSH_USER, SSH_PRIVATE_KEY (for deploy job).
-# The build job pushes tags based on branch name (${{ github.ref_name }}) and SHA. Deployment uses the branch name tag.
-# If the push action only used 'type=sha', the deployment step needs logic to find that specific tag.
-# For simplicity, the build job below is modified to also push 'latest' and the branch name tag.
-    
-```
-
-Wait, I need to ensure the `build-and-push` job actually pushes the branch tag (`${{ github.ref_name }}`) if the deploy job relies on it. I will adjust the `build-and-push` job in the YAML I am about to create.
-
-**Revised `build-and-push` logic in YAML:**
-
-```yaml
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -142,10 +46,41 @@ Wait, I need to ensure the `build-and-push` job actually pushes the branch tag (
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          type=sha,prefix=sha-
+          ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-```
-I need to re-examine the output of `docker/metadata-action@v5`. The `tags` output is a comma-separated string, and accessing it directly is not guaranteed to work for specific tags like SHA in the `needs` context without further setup. The deployment job will use `${{ github.ref_name }}` assuming it was pushed.
 
-I will finalize the YAML file creation now, ensuring the tags are set correctly in the build job so the deploy job can reliably pull the image tagged with the branch name.
-<ctrl95><ctrl42>call:default_api:write_to_file{content:
+  deploy-to-server:
+    name: Deploy via SSH
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+    - name: SSH and Deploy
+      uses: appleboy/ssh-action@v1.0.1
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          
+          echo "Stopping and removing old container..."
+          docker stop fastapitime-container || true
+          docker rm fastapitime-container || true
+          
+          echo "Pulling new image: ${IMAGE_TAG}"
+          # Note: Remote server must be configured to pull from GHCR.
+          docker pull $IMAGE_TAG || true
+          
+          echo "Starting new container..."
+          docker run -d \
+            --name fastapitime-container \
+            -p 8000:8000 \
+            $IMAGE_TAG
+            
+          echo "Deployment script finished successfully."
+
+# REQUIRED SECRETS:
+# GITHUB_TOKEN (automatically generated for push/write permissions)
+# SSH_HOST, SSH_USER, SSH_PRIVATE_KEY (for deployment job)
