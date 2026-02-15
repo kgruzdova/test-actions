@@ -53,7 +53,7 @@ jobs:
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type-gha
-        cache-to: type-gha, mode-max
+        cache-to: type-gha, mode=max
 
   deploy-to-server:
     needs: build
@@ -69,37 +69,35 @@ jobs:
         key: ${{ secrets.SSH_KEY }}
         port: ${{ secrets.PORT }}
         script: |
-          echo "Stopping and removing old container..."
-          docker stop fastapitime-container || true
-          docker rm fastapitime-container || true
-          
+          # Останавливаем и удаляем старый контейнер
+          docker stop time-server || true
+          docker rm time-server || true
+
           # Удаляем старый образ
           docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
 
           # Логинимся в GitHub Container Registry
-          echo ${{ secrets.GITHUB_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --passward-stdin
-         
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
           # Скачиваем новый образ
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-         
+
           # Запускаем новый контейнер
           docker run -d \
-            --name fastapitime-container \
+            --name time-server \
             --restart unless-stopped \
-            -p 8000:8000
+            -p 8000:8000 \
             -e HOST=0.0.0.0 \
             -e PORT=8000 \
             -e DEBUG=False \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
           # Показываем статус контейнера
-          docker ps | grep fastapitime-container
+          docker ps | grep time-server
 
           # Очищаем неиспользуемые образы
-          docker image prune  -f 
+          docker image prune -f
 
-          
-
-        
+# REQUIRED SECRETS:
 # GITHUB_TOKEN (automatically generated for push/write permissions)
-# SSH_HOST, SSH_USER, SSH_PRIVATE_KEY (for deployment job)
+# HOST, USERNAME, SSH_KEY, PORT (for deployment job)
