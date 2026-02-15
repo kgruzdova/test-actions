@@ -58,6 +58,9 @@ jobs:
   deploy-to-server:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Required to pull from GHCR (read) and push (write, if needed)
     if: github.ref == 'refs/heads/main'
 
     steps:
