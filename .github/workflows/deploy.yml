@@ -1,5 +1,5 @@
 name: Build and Deploy
-
+#Ver2
 on:
   push:
     branches: [ main ] 
@@ -96,7 +96,8 @@ jobs:
           docker ps | grep fastapitime-container
 
           # Очищаем неиспользуемые образы
-          docker image prune  -f
+          docker image prune  -f 
+
           
 
         
