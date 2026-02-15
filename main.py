@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from datetime import datetime
 import uvicorn
+import pytz
 
 app = FastAPI(title="Time Server API", version="1.0.0")
 
@@ -106,6 +107,76 @@ async def get_current_datetime():
         "weekday_number": datetime.now().weekday(),
         "day_of_year": datetime.now().timetuple().tm_yday
     }
+
+@app.get("/convert")
+async def convert_time(time_str: str, timezone: str):
+    """
+    Конвертировать время из UTC в указанный часовой пояс.
+    
+    Args:
+        time_str (str): Время в формате "HH:MM" или "YYYY-MM-DD HH:MM"
+        timezone (str): Название часового пояса (например, "Asia/Yekaterinburg", "Europe/Moscow")
+        
+    Returns:
+        dict: Оригинальное время в UTC и сконвертированное время
+    """
+    try:
+        # Пытаемся распарсить время (сначала HH:MM, потом полный формат)
+        try:
+            input_time = datetime.strptime(time_str, "%H:%M")
+            # Если передано только время, берем сегодняшнюю дату
+            now = datetime.now()
+            input_time = input_time.replace(year=now.year, month=now.month, day=now.day)
+        except ValueError:
+            input_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+        
+        # Устанавливаем UTC для входного времени
+        utc_time = pytz.utc.localize(input_time)
+        
+        # Находим целевой часовой пояс
+        try:
+            target_tz = pytz.timezone(timezone)
+        except pytz.exceptions.UnknownTimeZoneError:
+            # Попробуем найти по части названия (например "Екатеринбург")
+            all_timezones = pytz.all_timezones
+            found_tz = None
+            
+            # Словарь маппинга русских названий на стандарты pytz
+            russian_tz_map = {
+                "екатеринбург": "Asia/Yekaterinburg",
+                "москва": "Europe/Moscow",
+                "калининград": "Europe/Kaliningrad",
+                "новосибирск": "Asia/Novosibirsk",
+                "владивосток": "Asia/Vladivostok"
+            }
+            
+            mapped_tz = russian_tz_map.get(timezone.lower())
+            if mapped_tz:
+                target_tz = pytz.timezone(mapped_tz)
+            else:
+                # Поиск по подстроке
+                for tz in all_timezones:
+                    if timezone.lower() in tz.lower():
+                        found_tz = tz
+                        break
+                if found_tz:
+                    target_tz = pytz.timezone(found_tz)
+                else:
+                    raise HTTPException(status_code=400, detail=f"Unknown timezone: {timezone}")
+
+        # Конвертируем
+        converted_time = utc_time.astimezone(target_tz)
+        
+        return {
+            "input_utc": time_str,
+            "target_timezone": str(target_tz),
+            "converted_time": converted_time.strftime("%H:%M"),
+            "full_converted_datetime": converted_time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid time format. Use HH:MM or YYYY-MM-DD HH:MM. Error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
